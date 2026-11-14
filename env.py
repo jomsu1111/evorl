@@ -13,6 +13,7 @@ Layout:
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -90,16 +91,24 @@ class EvolutionEnv:
         self.evaluate(n)
         return n
 
+    @staticmethod
+    def adapter_name(path: str) -> str:
+        """Unique per trained weights: vLLM keeps serving the *old* weights if a name is
+        re-registered, so the name includes the weight file's mtime+size."""
+        st = os.stat(os.path.join(path, "adapter_model.safetensors"))
+        tag = hashlib.sha1(f"{os.path.abspath(path)}|{st.st_mtime_ns}|{st.st_size}".encode()).hexdigest()[:10]
+        return "a_" + tag
+
     def model_name(self, n: Node) -> str:
         if not n.adapter:
             return self.cfg.policy_name
-        name = "a_" + n.adapter.rstrip("/").split("/")[-1].replace(".", "_")
+        name = self.adapter_name(n.adapter)
         self.policy.load_adapter(name, n.adapter)
         return name
 
     def release(self, n: Node) -> None:
-        if n.adapter:
-            self.policy.unload_adapter("a_" + n.adapter.rstrip("/").split("/")[-1].replace(".", "_"))
+        if n.adapter and os.path.exists(n.adapter):
+            self.policy.unload_adapter(self.adapter_name(n.adapter))
 
     # ------------------------------------------------------------ measurement
     def evaluate(self, n: Node) -> Dict[str, Any]:

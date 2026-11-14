@@ -58,7 +58,11 @@ class PolicyClient:
                 return
             root = self.base_url[:-3] if self.base_url.endswith("/v1") else self.base_url
             r = requests.post(f"{root}/v1/load_lora_adapter", json={"lora_name": name, "lora_path": path}, timeout=300)
-            if r.status_code != 200 and "already" not in r.text.lower():
+            if r.status_code != 200 and "already" in r.text.lower():
+                # A same-named adapter may hold different (stale) weights: replace it.
+                requests.post(f"{root}/v1/unload_lora_adapter", json={"lora_name": name}, timeout=120)
+                r = requests.post(f"{root}/v1/load_lora_adapter", json={"lora_name": name, "lora_path": path}, timeout=300)
+            if r.status_code != 200:
                 raise RuntimeError(f"load_lora_adapter({name}) failed: {r.status_code} {r.text}")
             self._loaded.add(name)
 
