@@ -21,7 +21,7 @@ from collections import Counter, defaultdict
 import numpy as np
 
 from .features import AGENT_FEATURES, ALL_FEATURES, TASK_FEATURES
-from .qlearn import ACTIONS, cost, load, tree_values
+from .qlearn import ACTIONS, COST, cost, load, tree_values
 
 
 def main() -> None:
@@ -30,7 +30,9 @@ def main() -> None:
     ap.add_argument("--results-dir", default="/root/cove-rl/results")
     ap.add_argument("--lam", type=float, default=0.0)
     ap.add_argument("--pair-eps", type=float, default=0.15)
+    ap.add_argument("--cost-model", choices=["flops", "scale", "wall"], default="flops")
     args = ap.parse_args()
+    COST["model"] = args.cost_model
 
     trans, feats = load(args.results_dir, args.exp)
     kids, V = tree_values(trans, args.lam, 1.0)
@@ -40,7 +42,7 @@ def main() -> None:
             continue
         q = {a: r["dV"] - args.lam * cost(r) + V((key[0], r["child"])) for a, r in ch.items()}
         r1 = {a: r["dV"] - args.lam * cost(r) for a, r in ch.items()}
-        rows.append({"key": key, "root": f"{key[0]}:{ch['H']['root']}", "f": feats[key], "q": q,
+        rows.append({"key": key, "root": f"{key[0]}:{ch['H']['tree']}", "f": feats[key], "q": q,
                      "a_star": max(q, key=q.get), "a_myopic": max(r1, key=r1.get),
                      "margin": sorted(q.values())[-1] - sorted(q.values())[-2]})
     print(f"interior nodes with all actions: {len(rows)}")

@@ -10,7 +10,7 @@ import os
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List
 
-ACTIONS = ["H", "P", "B"]  # Harness(memory) / Parameter(RFT) / Both
+ACTIONS = ["H", "P", "B", "N"]  # Harness(memory) / Parameter(RFT) / Both / No update
 
 
 @dataclass
@@ -37,8 +37,8 @@ class EvoConfig:
     batch_size: int = 32                      # tasks per evolution step
     type_schedule: str = "alternate"          # alternate | random
     drift_steps: List[int] = field(default_factory=lambda: [6])  # API world version bumps
-    api_val_size: int = 48
-    math_val_size: int = 100
+    api_val_size: int = 80                    # all (op, module) combos
+    math_val_size: int = 200
     math_levels: List[int] = field(default_factory=lambda: [1, 2, 3])
 
     # ---- rollout ----

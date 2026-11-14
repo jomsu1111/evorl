@@ -154,7 +154,7 @@ class EvolutionEnv:
     # ---------------------------------------------------------------- actions
     def expand(self, n: Node, action: str, p_tasks: Optional[list] = None, tag: str = "") -> Node:
         """Apply action to node n. `p_tasks` overrides the tasks used by P (COVE's pool)."""
-        assert action in ("H", "P", "B"), action
+        assert action in ("H", "P", "B", "N"), action
         cid = f"{n.node_id}.{action}{tag}"
         done = self.load(cid)
         if done is not None and "V" in done.metrics:
@@ -165,6 +165,13 @@ class EvolutionEnv:
                      copy.deepcopy(n.history), copy.deepcopy(n.counters), {})
         self.bank(n).copy_to(os.path.join(self.node_dir(cid), "mem"))
         cost: Dict[str, Any] = {}
+        if action == "N" and self.stream.version(child.step) == self.stream.version(n.step):
+            # Unchanged agent in an unchanged world: reuse the parent's measurement so that
+            # N's ΔV is exactly 0 instead of evaluation noise.
+            child.metrics = dict(n.metrics, reused_from=n.node_id)
+            src = os.path.join(self.node_dir(n.node_id), "val.json")
+            if os.path.exists(src):
+                shutil.copy(src, os.path.join(self.node_dir(cid), "val.json"))
 
         if action in ("H", "B"):
             t0, m0 = time.time(), self.helper.meter.snapshot()

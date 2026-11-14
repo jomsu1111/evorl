@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 ERRORS = ["api_error", "wrong_output", "no_code", "api_not_used", "wrong_answer", "no_answer"]
-LAST_ACTIONS = ["H", "P", "B"]
+LAST_ACTIONS = ["H", "P", "B", "N"]
 
 TASK_FEATURES = (["type_api", "t1_success", "t2_recovery", "final_success", "resp_len_k"]
                  + [f"err_{e}" for e in ERRORS])

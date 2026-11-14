@@ -9,6 +9,7 @@ Leaves are terminal (finite-horizon targets), so their batch features are not ne
 from __future__ import annotations
 
 import argparse
+import os
 import time
 
 from .config import EvoConfig, parse_overrides
@@ -29,6 +30,11 @@ def main() -> None:
     H = args.horizon or cfg.horizon
     root = env.load(args.root) or env.make_root(args.root)
     env.evaluate(root)
+    trees_path = os.path.join(env.root, "trees.txt")
+    known = open(trees_path).read().split() if os.path.exists(trees_path) else []
+    if args.root not in known:
+        with open(trees_path, "a") as f:
+            f.write(args.root + "\n")
     frontier, t_start = [root], time.time()
     for depth in range(H):
         nxt = []

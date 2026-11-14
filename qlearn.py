@@ -19,22 +19,43 @@ from typing import Dict, List
 
 import numpy as np
 
+from .config import ACTIONS
 from .features import ALL_FEATURES, TASK_FEATURES
 
-ACTIONS = ["H", "P", "B"]
+# Cost models (raw costs are always stored, so this is a post-hoc choice):
+#   flops : measured compute from token counts; inference 2*N, training 6*N FLOPs/token,
+#           helper N=4e9, policy N=0.6e9; unit = 1e15 FLOPs (PFLOP).
+#   scale : assumed large-scale ratio, C(H)=1, C(P)=10, C(B)=11, C(N)=0.
+#   wall  : wall-clock seconds / 600 (distorted when collectors run concurrently).
+COST = {"model": "flops"}
+SCALE = {"H": 1.0, "P": 10.0, "B": 11.0, "N": 0.0}
+
+
+def _tree_of(parent: str, trees: List[str]) -> str:
+    best = ""
+    for t in trees:
+        if (parent == t or parent.startswith(t + ".")) and len(t) > len(best):
+            best = t
+    return best or "behavior"
 
 
 def load(results_dir: str, exps: List[str]):
+    """Transitions get r['tree'] = the collected tree root they belong to (from trees.txt);
+    transitions outside any tree (behaviour runs) get 'behavior' and are never held out."""
     trans, feats = [], {}
     for exp in exps:
         root = os.path.join(results_dir, exp)
         p = os.path.join(root, "transitions.jsonl")
         if not os.path.exists(p):
             continue
+        tp = os.path.join(root, "trees.txt")
+        trees = open(tp).read().split() if os.path.exists(tp) else []
         seen = {}
         for l in open(p):
             r = json.loads(l)
             seen[(exp, r["child"])] = r  # dedupe re-runs: last wins
+        for r in seen.values():
+            r["tree"] = _tree_of(r["parent"], trees)
         trans += list(seen.values())
         nd = os.path.join(root, "nodes")
         for nid in os.listdir(nd):
@@ -45,8 +66,13 @@ def load(results_dir: str, exps: List[str]):
 
 
 def cost(r) -> float:
-    c = r.get("cost", {})
-    return (c.get("h_seconds", 0.0) + c.get("p_seconds", 0.0)) / 600.0
+    c, a = r.get("cost", {}), r["action"]
+    if COST["model"] == "scale":
+        return SCALE[a]
+    if COST["model"] == "wall":
+        return (c.get("h_seconds", 0.0) + c.get("p_seconds", 0.0)) / 600.0
+    return (2 * 4e9 * c.get("helper_tokens", 0) + 2 * 0.6e9 * c.get("sample_tokens", 0)
+            + 6 * 0.6e9 * c.get("train_tokens", 0)) / 1e15
 
 
 def build(trans, feats, keys, lam):
@@ -58,7 +84,7 @@ def build(trans, feats, keys, lam):
         sn = feats.get((r["exp"], r["child"]))
         X.append([s[k] for k in keys]); A.append(r["action"]); R.append(r["dV"] - lam * cost(r))
         Xn.append([sn[k] for k in keys] if sn else [0.0] * len(keys)); done.append(sn is None)
-        roots.append(f"{r['exp']}:{r['root']}")
+        roots.append(f"{r['exp']}:{r['tree']}")
     return np.array(X), np.array(A), np.array(R), np.array(Xn), np.array(done), np.array(roots)
 
 
@@ -113,6 +139,8 @@ def cv_regret(trans, feats, keys, lam, gamma):
     kids, V = tree_values(trans, lam, 1.0)
     out = {}
     for held in sorted(set(roots)):
+        if held.endswith(":behavior"):
+            continue
         tr = roots != held
         models = fqi(X[tr], A[tr], R[tr], Xn[tr], done[tr], gamma)
         exp, root = held.split(":", 1)
@@ -143,7 +171,9 @@ def main() -> None:
     ap.add_argument("--features", choices=["all", "task"], default="all")
     ap.add_argument("--tag", default="")
     ap.add_argument("--cv", action="store_true")
+    ap.add_argument("--cost-model", choices=["flops", "scale", "wall"], default="flops")
     args = ap.parse_args()
+    COST["model"] = args.cost_model
 
     keys = ALL_FEATURES if args.features == "all" else TASK_FEATURES
     trans, feats = load(args.results_dir, args.exp)
@@ -153,15 +183,16 @@ def main() -> None:
         for k, v in res.items():
             print(k, json.dumps({kk: (round(vv, 4) if isinstance(vv, float) else vv) for kk, vv in v.items()}))
         if res:
-            for col in ["optimal", "router", "always_H", "always_P", "always_B"]:
+            for col in ["optimal", "router"] + [f"always_{a}" for a in ACTIONS]:
                 print(f"mean {col}: {np.mean([v[col] for v in res.values()]):.4f}")
         return
     X, A, R, Xn, done, _ = build(trans, feats, keys, args.lam)
     models = fqi(X, A, R, Xn, done, args.gamma)
-    tag = args.tag or f"g{args.gamma}_l{args.lam}_{args.features}"
+    tag = args.tag or f"g{args.gamma}_l{args.lam}_{args.cost_model}_{args.features}"
     path = os.path.join(args.results_dir, args.exp[0], f"q_{tag}.pkl")
     with open(path, "wb") as f:
-        pickle.dump({"models": models, "features": keys, "gamma": args.gamma, "lam": args.lam, "tag": tag}, f)
+        pickle.dump({"models": models, "features": keys, "gamma": args.gamma, "lam": args.lam,
+                     "cost_model": args.cost_model, "tag": tag}, f)
     print("saved", path, "n=", len(X))
 
 

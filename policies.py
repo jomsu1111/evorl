@@ -26,11 +26,11 @@ class AlwaysPolicy(Policy):
 
 
 class RandomPolicy(Policy):
-    def __init__(self, seed: int = 0, probs=(1 / 3, 1 / 3, 1 / 3)):
+    def __init__(self, seed: int = 0, probs=(0.25, 0.25, 0.25, 0.25)):
         self.rng, self.probs, self.name = random.Random(seed), probs, f"random{seed}"
 
     def act(self, env, node, feats):
-        return self.rng.choices(["H", "P", "B"], weights=self.probs)[0], None
+        return self.rng.choices(["H", "P", "B", "N"], weights=self.probs)[0], None
 
 
 class CovePolicy(Policy):
@@ -109,7 +109,7 @@ class QPolicy(Policy):
 
 
 def make_policy(spec: str, seed: int = 0) -> Policy:
-    if spec in ("H", "P", "B"):
+    if spec in ("H", "P", "B", "N"):
         return AlwaysPolicy(spec)
     if spec == "random":
         return RandomPolicy(seed)
