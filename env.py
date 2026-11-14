@@ -13,6 +13,7 @@ Layout:
 from __future__ import annotations
 
 import copy
+import fcntl
 import hashlib
 import json
 import os
@@ -243,10 +244,18 @@ class EvolutionEnv:
             cmd += ["--init-adapter", parent.adapter]
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=c.train_gpu, TOKENIZERS_PARALLELISM="false")
         log = os.path.join(self.node_dir(child.node_id), "train.log")
-        with open(log, "w") as lf:
-            subprocess.run(cmd, cwd=PKG_PARENT, env=env, stdout=lf, stderr=subprocess.STDOUT, check=True)
+        # Parallel tree queues share one training GPU: serialize trainers, and keep the
+        # wait for the lock out of the measured cost.
+        os.makedirs(c.work_dir, exist_ok=True)
+        tw = time.time()
+        with open(os.path.join(c.work_dir, f"train_gpu{c.train_gpu}.lock"), "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            wait = time.time() - tw
+            with open(log, "w") as lf:
+                subprocess.run(cmd, cwd=PKG_PARENT, env=env, stdout=lf, stderr=subprocess.STDOUT, check=True)
         stats = json.load(open(os.path.join(out, "train_stats.json")))
         child.adapter = out
         cost.update(train_tokens=stats["train_tokens"], train_seconds=stats["seconds"],
-                    loss_first=stats["loss_first"], loss_last=stats["loss_last"], p_seconds=time.time() - t0)
+                    loss_first=stats["loss_first"], loss_last=stats["loss_last"],
+                    lock_wait=wait, p_seconds=time.time() - t0 - wait)
         return cost
