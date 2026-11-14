@@ -52,9 +52,9 @@ class EvolutionEnv:
         self.adapter_root = os.path.join(cfg.work_dir, exp, "adapters")
         os.makedirs(os.path.join(self.root, "nodes"), exist_ok=True)
         os.makedirs(self.adapter_root, exist_ok=True)
-        cfg_path = os.path.join(self.root, "config.json")
-        if not os.path.exists(cfg_path):
-            cfg.save(cfg_path)
+        # Record the config actually used by every invocation (the latest one is config.json).
+        cfg.save(os.path.join(self.root, "config.json"))
+        cfg.save(os.path.join(self.root, "configs", f"{time.strftime('%Y%m%d-%H%M%S')}.json"))
         self.stream = TaskStream(cfg)
         self.policy = PolicyClient(cfg.policy_url, cfg.policy_name, cfg.max_concurrency)
         self.helper = HelperLLM(cfg.helper_url, cfg.helper_name)

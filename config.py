@@ -55,8 +55,8 @@ class EvoConfig:
     rft_keep_per_task: int = 2
     lora_rank: int = 16
     lora_alpha: int = 32
-    train_epochs: int = 2
-    train_lr: float = 1e-4
+    train_epochs: int = 4
+    train_lr: float = 3e-4
     train_batch_size: int = 8
 
     # ---- tree collection ----
