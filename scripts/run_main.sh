@@ -22,10 +22,11 @@ if [ "${SKIP_A:-0}" != "1" ]; then
   for s in 0 1; do run evorl.run_policy --exp $EXP --policy random --seed $s --steps 10 --root R0 > "$LOG/A_random$s.log"; done
 fi
 C=/root/cove-rl/results/$EXP/curves
-Q1="R0 $(node_at $C/random0_R0.jsonl 4) $(node_at $C/random0_R0.jsonl 7) $(node_at $C/always_H_R0.jsonl 4)"
-Q2="$(node_at $C/random1_R0.jsonl 3) $(node_at $C/random1_R0.jsonl 6) $(node_at $C/random1_R0.jsonl 9) $(node_at $C/always_P_R0.jsonl 4)"
+# Q1/Q2 may be given to resume (finished nodes are reused from disk, trees.txt is deduplicated).
+Q1=${Q1:-"R0 $(node_at $C/random0_R0.jsonl 4) $(node_at $C/random0_R0.jsonl 7) $(node_at $C/always_H_R0.jsonl 4)"}
+Q2=${Q2:-"$(node_at $C/random1_R0.jsonl 3) $(node_at $C/random1_R0.jsonl 6) $(node_at $C/random1_R0.jsonl 9) $(node_at $C/always_P_R0.jsonl 4)"}
 echo "queue1: $Q1"; echo "queue2: $Q2"
-( for r in $Q1; do run evorl.collect_tree --exp $EXP --root "$r"; done > "$LOG/B_queue1.log" ) &
-( for r in $Q2; do run evorl.collect_tree --exp $EXP --root "$r"; done > "$LOG/B_queue2.log" ) &
+( for r in $Q1; do run evorl.collect_tree --exp $EXP --root "$r"; done >> "$LOG/B_queue1.log" ) &
+( for r in $Q2; do run evorl.collect_tree --exp $EXP --root "$r"; done >> "$LOG/B_queue2.log" ) &
 wait
 echo MAIN_DONE
