@@ -38,13 +38,14 @@ def main() -> None:
     kids, V = tree_values(trans, args.lam, 1.0)
     rows = []
     for key, ch in kids.items():
-        if set(ch) != set(ACTIONS) or key not in feats:
+        if set(ch) != set(ACTIONS) or key not in feats or ch["H"]["tree"] == "behavior":
             continue
-        q = {a: r["dV"] - args.lam * cost(r) + V((key[0], r["child"])) for a, r in ch.items()}
+        h = ch["H"]["horizon"] - ch["H"]["tree_depth"]  # steps left in this node's tree
+        q = {a: r["dV"] - args.lam * cost(r) + V((key[0], r["child"]), h - 1) for a, r in ch.items()}
         r1 = {a: r["dV"] - args.lam * cost(r) for a, r in ch.items()}
         rows.append({"key": key, "root": f"{key[0]}:{ch['H']['tree']}", "f": feats[key], "q": q,
                      "a_star": max(q, key=q.get), "a_myopic": max(r1, key=r1.get),
-                     "margin": sorted(q.values())[-1] - sorted(q.values())[-2]})
+                     "margin": sorted(q.values())[-1] - sorted(q.values())[-2], "h": h})
     print(f"interior nodes with all actions: {len(rows)}")
     if not rows:
         return
@@ -53,8 +54,9 @@ def main() -> None:
     for r in rows:
         by_type["api" if r["f"]["type_api"] > 0.5 else "math"][r["a_star"]] += 1
     print("(1) a* by batch type:", {k: dict(v) for k, v in by_type.items()})
-    dis = np.mean([r["a_star"] != r["a_myopic"] for r in rows])
-    print(f"(2) myopic != long-horizon best action: {dis:.2%}")
+    lh = [r for r in rows if r["h"] > 1]  # with one step left both criteria coincide by definition
+    dis = np.mean([r["a_star"] != r["a_myopic"] for r in lh]) if lh else float("nan")
+    print(f"(2) myopic != long-horizon best action (nodes with >1 step left, n={len(lh)}): {dis:.2%}")
 
     T = np.array([[r["f"][k] for k in TASK_FEATURES] for r in rows])
     Ag = np.array([[r["f"][k] for k in AGENT_FEATURES] for r in rows])

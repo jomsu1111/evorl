@@ -31,31 +31,45 @@ COST = {"model": "flops"}
 SCALE = {"H": 1.0, "P": 10.0, "B": 11.0, "N": 0.0}
 
 
-def _tree_of(parent: str, trees: List[str]) -> str:
+def _depth(node_id: str) -> int:
+    return node_id.count(".")
+
+
+def _tree_of(parent: str, trees: List[str], horizon: int) -> str:
+    """Deepest collected root whose depth-`horizon` tree contains `parent` as an interior node."""
     best = ""
     for t in trees:
-        if (parent == t or parent.startswith(t + ".")) and len(t) > len(best):
+        if ((parent == t or parent.startswith(t + ".")) and _depth(parent) - _depth(t) < horizon
+                and len(t) > len(best)):
             best = t
     return best or "behavior"
 
 
 def load(results_dir: str, exps: List[str]):
-    """Transitions get r['tree'] = the collected tree root they belong to (from trees.txt);
-    transitions outside any tree (behaviour runs) get 'behavior' and are never held out."""
+    """Transitions get r['tree'] = the collected tree root they belong to (from trees.txt) and
+    r['tree_depth'] = depth of the parent below that root. Transitions outside every tree's
+    horizon (behaviour runs) get 'behavior': used for fitting, never held out or scored."""
     trans, feats = [], {}
     for exp in exps:
         root = os.path.join(results_dir, exp)
         p = os.path.join(root, "transitions.jsonl")
         if not os.path.exists(p):
             continue
+        cp = os.path.join(root, "config.json")
+        horizon = int(json.load(open(cp)).get("horizon", 3)) if os.path.exists(cp) else 3
         tp = os.path.join(root, "trees.txt")
         trees = open(tp).read().split() if os.path.exists(tp) else []
         seen = {}
         for l in open(p):
             r = json.loads(l)
+            if r["action"] not in ACTIONS:  # e.g. COVE's pool-trained "Bc" in policy runs
+                continue
+            r["exp"] = exp  # the results directory is authoritative (copies/renames of an exp)
             seen[(exp, r["child"])] = r  # dedupe re-runs: last wins
         for r in seen.values():
-            r["tree"] = _tree_of(r["parent"], trees)
+            r["tree"] = _tree_of(r["parent"], trees, horizon)
+            r["horizon"] = horizon
+            r["tree_depth"] = (_depth(r["parent"]) - _depth(r["tree"])) if r["tree"] != "behavior" else None
         trans += list(seen.values())
         nd = os.path.join(root, "nodes")
         for nid in os.listdir(nd):
@@ -113,20 +127,19 @@ def fqi(X, A, R, Xn, done, gamma: float, iters: int = 6) -> Dict[str, object]:
 
 
 def tree_values(trans, lam, gamma):
-    """Exact finite-horizon backups inside each collected tree: V*(node), Q*(node, a)."""
+    """Exact finite-horizon backups: V(node, h) = best return of h more steps from node."""
     kids = defaultdict(dict)
     for r in trans:
         kids[(r["exp"], r["parent"])][r["action"]] = r
     vstar = {}
 
-    def V(key):
-        if key in vstar:
-            return vstar[key]
-        if key not in kids:
-            vstar[key] = 0.0
+    def V(key, h: int) -> float:
+        if h <= 0 or key not in kids:
             return 0.0
-        vstar[key] = max(r["dV"] - lam * cost(r) + gamma * V((key[0], r["child"])) for r in kids[key].values())
-        return vstar[key]
+        if (key, h) not in vstar:
+            vstar[(key, h)] = max(r["dV"] - lam * cost(r) + gamma * V((key[0], r["child"]), h - 1)
+                                  for r in kids[key].values())
+        return vstar[(key, h)]
 
     return kids, V
 
@@ -144,8 +157,11 @@ def cv_regret(trans, feats, keys, lam, gamma):
         tr = roots != held
         models = fqi(X[tr], A[tr], R[tr], Xn[tr], done[tr], gamma)
         exp, root = held.split(":", 1)
+        H = next(r["horizon"] for r in trans if r["exp"] == exp)
         key, ret, path = (exp, root), 0.0, []
-        while key in kids and key in feats:
+        for _ in range(H):
+            if key not in kids or key not in feats:
+                break
             x = np.array([[feats[key][k] for k in keys]])
             qs = {a: models[a].predict(x)[0] for a in models if a in kids[key]}
             a = max(qs, key=qs.get)
@@ -155,10 +171,12 @@ def cv_regret(trans, feats, keys, lam, gamma):
         base = {}
         for b in ACTIONS:
             k2, rb = (exp, root), 0.0
-            while k2 in kids and b in kids[k2]:
+            for _ in range(H):
+                if k2 not in kids or b not in kids[k2]:
+                    break
                 r = kids[k2][b]; rb += r["dV"] - lam * cost(r); k2 = (exp, r["child"])
             base[f"always_{b}"] = rb
-        out[held] = {"optimal": V((exp, root)), "router": ret, "path": "".join(path), **base}
+        out[held] = {"optimal": V((exp, root), H), "router": ret, "path": "".join(path), **base}
     return out
 
 
