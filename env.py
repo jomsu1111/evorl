@@ -234,16 +234,25 @@ class EvolutionEnv:
             for r in rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
         out = os.path.join(self.adapter_root, child.node_id)
+        stats, wait = self.run_trainer(data_path, out, parent.adapter, os.path.join(self.node_dir(child.node_id), "train.log"))
+        child.adapter = out
+        cost.update(train_tokens=stats["train_tokens"], train_seconds=stats["seconds"],
+                    loss_first=stats["loss_first"], loss_last=stats["loss_last"],
+                    lock_wait=wait, p_seconds=time.time() - t0 - wait)
+        return cost
+
+    def run_trainer(self, data_path: str, out: str, init_adapter: Optional[str], log: str):
+        """LoRA RFT on `data_path` (optionally on top of `init_adapter`) into `out`.
+        Returns (train_stats, seconds spent waiting for the shared training GPU)."""
         if os.path.exists(out):
             shutil.rmtree(out)
         c = self.cfg
         cmd = [sys.executable, "-m", "evorl.trainer", "--base", c.policy_model, "--data", data_path, "--out", out,
                "--epochs", str(c.train_epochs), "--lr", str(c.train_lr), "--rank", str(c.lora_rank),
                "--alpha", str(c.lora_alpha), "--bs", str(c.train_batch_size)]
-        if parent.adapter:
-            cmd += ["--init-adapter", parent.adapter]
+        if init_adapter:
+            cmd += ["--init-adapter", init_adapter]
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=c.train_gpu, TOKENIZERS_PARALLELISM="false")
-        log = os.path.join(self.node_dir(child.node_id), "train.log")
         # Parallel tree queues share one training GPU: serialize trainers, and keep the
         # wait for the lock out of the measured cost.
         os.makedirs(c.work_dir, exist_ok=True)
@@ -253,9 +262,4 @@ class EvolutionEnv:
             wait = time.time() - tw
             with open(log, "w") as lf:
                 subprocess.run(cmd, cwd=PKG_PARENT, env=env, stdout=lf, stderr=subprocess.STDOUT, check=True)
-        stats = json.load(open(os.path.join(out, "train_stats.json")))
-        child.adapter = out
-        cost.update(train_tokens=stats["train_tokens"], train_seconds=stats["seconds"],
-                    loss_first=stats["loss_first"], loss_last=stats["loss_last"],
-                    lock_wait=wait, p_seconds=time.time() - t0 - wait)
-        return cost
+        return json.load(open(os.path.join(out, "train_stats.json"))), wait
