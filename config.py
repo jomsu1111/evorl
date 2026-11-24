@@ -49,6 +49,8 @@ class EvoConfig:
     memory_top_k: int = 3
     memory_min_sim: float = 0.35
     skill_min_sim: float = 0.30
+    # Task types whose prompts get retrieved memory/skills (H still writes every type's experience).
+    memory_task_types: List[str] = field(default_factory=lambda: ["api", "math"])
 
     # ---- P: rejection-sampling fine-tuning (RFT) ----
     rft_samples: int = 4                      # extra samples per task for data

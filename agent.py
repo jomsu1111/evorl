@@ -68,7 +68,8 @@ def rollout(cfg, policy, model: str, tasks, world, bank=None, *, max_turns: int 
     items = [(t, k) for t in tasks for k in range(n)]
     ctx_cache: Dict[str, Dict] = {}
     if bank is not None:
-        for t, ctx in zip(tasks, bank.retrieve_many([t.text() for t in tasks])):
+        use = [t for t in tasks if t.task_type in cfg.memory_task_types]
+        for t, ctx in zip(use, bank.retrieve_many([t.text() for t in use]) if use else []):
             ctx_cache[t.task_id] = _slim_ctx(ctx)
     convs, mts, seeds = [], [], []
     for t, k in items:

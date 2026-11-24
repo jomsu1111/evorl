@@ -252,7 +252,8 @@ class EvolutionEnv:
                "--alpha", str(c.lora_alpha), "--bs", str(c.train_batch_size)]
         if init_adapter:
             cmd += ["--init-adapter", init_adapter]
-        env = dict(os.environ, CUDA_VISIBLE_DEVICES=c.train_gpu, TOKENIZERS_PARALLELISM="false")
+        env = dict(os.environ, CUDA_VISIBLE_DEVICES=c.train_gpu, TOKENIZERS_PARALLELISM="false",
+                   PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True")
         # Parallel tree queues share one training GPU: serialize trainers, and keep the
         # wait for the lock out of the measured cost.
         os.makedirs(c.work_dir, exist_ok=True)
@@ -261,5 +262,15 @@ class EvolutionEnv:
             fcntl.flock(lk, fcntl.LOCK_EX)
             wait = time.time() - tw
             with open(log, "w") as lf:
-                subprocess.run(cmd, cwd=PKG_PARENT, env=env, stdout=lf, stderr=subprocess.STDOUT, check=True)
+                rc = subprocess.run(cmd, cwd=PKG_PARENT, env=env, stdout=lf, stderr=subprocess.STDOUT).returncode
+            if rc != 0 and "OutOfMemoryError" in open(log).read():
+                # The helper server shares this GPU; long batches can exceed the default
+                # micro-batch. Gradients are token-normalized, so micro-bs only changes memory.
+                with open(log, "a") as lf:
+                    lf.write("\n[run_trainer] OOM at default micro-batch; retrying with --micro-bs 1\n")
+                    lf.flush()
+                    subprocess.run(cmd + ["--micro-bs", "1"], cwd=PKG_PARENT, env=env, stdout=lf,
+                                   stderr=subprocess.STDOUT, check=True)
+            elif rc != 0:
+                raise subprocess.CalledProcessError(rc, cmd)
         return json.load(open(os.path.join(out, "train_stats.json"))), wait
