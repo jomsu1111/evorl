@@ -25,6 +25,10 @@ def _install_cove_patches(embed_model: str) -> None:
 
     emb._record_cache_key = _key
     if emb._embedder_instance is None:
+        # Torch defaults to one thread per core; parallel lanes then oversubscribe the CPU
+        # (9 lanes x 128 threads made memory-node steps 10-100x slower).
+        import torch
+        torch.set_num_threads(int(os.environ.get("EVORL_CPU_THREADS", "8")))
         from sentence_transformers import SentenceTransformer
         emb._embedder_instance = SentenceTransformer(embed_model, device="cpu")
 

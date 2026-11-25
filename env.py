@@ -103,9 +103,21 @@ class EvolutionEnv:
     def model_name(self, n: Node) -> str:
         if not n.adapter:
             return self.cfg.policy_name
+        self.ensure_adapter(n.adapter)
         name = self.adapter_name(n.adapter)
         self.policy.load_adapter(name, n.adapter)
         return name
+
+    def ensure_adapter(self, path: str) -> None:
+        """Adapters live on the ephemeral /opt: after a container restart, retrain a missing one
+        (and its missing ancestors) from the saved RFT data before it is needed."""
+        if os.path.exists(os.path.join(path, "adapter_model.safetensors")):
+            return
+        with open(os.path.join(os.path.dirname(self.adapter_root), "rebuild.lock"), "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)  # one rebuild at a time per exp; others wait, then reuse it
+            if not os.path.exists(os.path.join(path, "adapter_model.safetensors")):
+                from .rebuild_adapters import rebuild
+                rebuild(self, os.path.basename(path), {})
 
     def release(self, n: Node) -> None:
         if n.adapter and os.path.exists(n.adapter):
@@ -160,6 +172,17 @@ class EvolutionEnv:
         done = self.load(cid)
         if done is not None and "V" in done.metrics:
             return done
+        # Runs in parallel lanes can reach the same uncached node: the first computes it, the
+        # others wait and reuse it (two writers would clobber each other's adapter and memory).
+        os.makedirs(os.path.join(self.root, "locks"), exist_ok=True)
+        with open(os.path.join(self.root, "locks", f"{cid}.lock"), "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            done = self.load(cid)
+            if done is not None and "V" in done.metrics:
+                return done
+            return self._expand(n, action, p_tasks, cid)
+
+    def _expand(self, n: Node, action: str, p_tasks: Optional[list], cid: str) -> Node:
         self.features(n)  # make sure s_t is materialized before the branch mutates anything
         eps = self.experience(n)
         child = Node(cid, n.node_id, n.root_id, n.depth + 1, n.step + 1, n.adapter,

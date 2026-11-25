@@ -108,7 +108,29 @@ class QPolicy(Policy):
         return max(qs, key=qs.get), None
 
 
+class SeqPolicy(Policy):
+    """Play a fixed action string, then hand over to another policy (e.g. 'seq:PNPNH>q:/x/q_rlcost.pkl').
+    Used for counterfactual rollouts: same prefix as a logged run, a different action at step t,
+    then the router again."""
+
+    def __init__(self, seq: str, then: Optional[Policy]):
+        self.seq, self.then, self.t = seq, then, 0
+        self.name = f"seq_{seq}" + (f"_then_{then.name}" if then else "")
+
+    def act(self, env, node, feats):
+        self.t += 1
+        if self.t <= len(self.seq):
+            return self.seq[self.t - 1], None
+        if self.then is None:
+            raise ValueError(f"{self.name}: sequence exhausted")
+        return self.then.act(env, node, feats)
+
+
 def make_policy(spec: str, seed: int = 0) -> Policy:
+    if spec.startswith("seq:"):
+        seq, _, then = spec[4:].partition(">")
+        assert set(seq) <= set("HPBN"), spec
+        return SeqPolicy(seq, make_policy(then, seed) if then else None)
     if spec in ("H", "P", "B", "N"):
         return AlwaysPolicy(spec)
     if spec == "random":
